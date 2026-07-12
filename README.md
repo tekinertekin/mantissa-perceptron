@@ -2,6 +2,11 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.9%2B-3776AB.svg)
+[![Engine](https://img.shields.io/badge/engine-mantissa-00599C.svg)](https://github.com/tekinertekin/mantissa)
+
+Perceptron classifier in Python, powered by the mantissa C engine. Rosenblatt
++ ADALINE rules, classic UCI datasets, honest benchmarks vs scikit-learn —
+3.5× leaner RAM, 4.6× faster batch predict.
 
 **Rosenblatt's perceptron, with a C engine.**
 
@@ -25,12 +30,15 @@ sklearn-like interface, not sklearn-compatible.
 ## Install
 
 ```sh
-pip install mantissa-perceptron   # TODO(packaging): confirm final names
+pip install mantissa-perceptron   # after PyPI publication
 ```
 
-Development layout: clone this repo next to
-[mantissa](https://github.com/tekinertekin/mantissa) and build the engine
-(`make dist` there); the package finds the sibling checkout automatically.
+This pulls in the engine (`mantissa-nn`) automatically.
+
+From a checkout (works today, no PyPI needed): clone this repo next to
+[mantissa](https://github.com/tekinertekin/mantissa), build the engine
+(`make dist` there), then `pip install -e .` here — the package finds the
+sibling checkout automatically.
 
 ## Quickstart
 

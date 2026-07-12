@@ -12,8 +12,11 @@ license = { text = "MIT" }
 authors = [{ name = "Tekin Ertekin" }]
 dependencies = [
     "numpy>=1.20",
-    # TODO(packaging): add mantissa's final PyPI name once published;
-    # keep it in sync with MANTISSA_PIP_NAME in mantissa_perceptron/_engine.py.
+    # Engine: "mantissa-nn" (kept in sync with MANTISSA_PIP_NAME in _engine.py).
+    # Uncomment once it is published to PyPI; until then a hard dependency would
+    # break `pip install -e .`. A sibling mantissa/ checkout is picked up
+    # automatically either way.
+    # "mantissa-nn",
 ]
 
 [project.optional-dependencies]
