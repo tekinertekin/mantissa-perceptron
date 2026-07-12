@@ -7,5 +7,12 @@ data/
 *.csv
 *.data
 *.npz
+# benchmark raw results — regenerable; only assets/*.png plots are committed
+bench/results/
+# packaging / test artifacts
+build/
+dist/
+*.egg-info/
+.pytest_cache/
 # local tooling state
 .claude/

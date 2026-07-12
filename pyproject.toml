@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mantissa-perceptron"
+version = "0.1.0"
+description = "A minimal, fast binary perceptron on the mantissa C engine"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Tekin Ertekin" }]
+dependencies = [
+    "numpy>=1.20",
+    # TODO(packaging): add mantissa's final PyPI name once published;
+    # keep it in sync with MANTISSA_PIP_NAME in mantissa_perceptron/_engine.py.
+]
+
+[project.optional-dependencies]
+bench = ["matplotlib>=3.5", "scikit-learn>=1.0"]
+dev = ["pytest>=7", "matplotlib>=3.5", "scikit-learn>=1.0"]
+
+[project.urls]
+Homepage = "https://github.com/tekinertekin/mantissa-perceptron"
+Engine = "https://github.com/tekinertekin/mantissa"
+
+[tool.setuptools]
+packages = ["mantissa_perceptron"]
