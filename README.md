@@ -97,11 +97,60 @@ oscillating mistake-driven rule on both train and test.
 ### Speed and memory vs famous implementations
 
 <!-- BEGIN:BENCH (owned by Dev B — bench/speed.py + bench/plots.py; do not edit outside these markers) -->
-*Pending — produced by `python -m bench.speed` and `python -m bench.plots`.*
+On the largest dataset (**banknote**, 1372×4, 100-epoch cap, 15 interleaved
+repeats, medians):
 
-![test accuracy](assets/accuracy.png)
-![fit time](assets/fit_time.png)
-![peak RSS](assets/peak_rss.png)
+| contender | fit (ms) ↓ | predict (ms) ↓ | peak RSS (MB) ↓ |
+|-----------|-----------:|---------------:|----------------:|
+| ours (perceptron) | 537.06 | 0.029 | **26.7** |
+| ours (delta)      | 661.37 | 0.028 | **26.8** |
+| scikit-learn      | **1.42** | 0.047 | 93.4 |
+| numpy (hand-rolled) | 51.63 | **0.006** | 26.6 |
+| pure Python       | 39.73 | 0.093 | 26.6 |
+
+*torch omitted — not importable in this environment; the harness includes it
+automatically when it is.*
+
+**Read this honestly.** We are the **leanest** contender and among the
+**worst** at training speed, and both facts have the same cause.
+
+- **Memory (our win): 26.7 MB vs scikit-learn's 93.4 MB — 3.5× leaner**,
+  import + one fit, whole-process peak. The mantissa engine adds only a
+  ~70 KB C dylib on top of the interpreter+numpy floor that every contender
+  pays; scikit-learn drags in scipy and its Cython extensions.
+- **Fit time (our loss): ~380× slower than scikit-learn, and slower even
+  than a naive numpy or pure-Python loop.** The perceptron rule crosses the
+  Python→C ctypes boundary *once per training sample* (a 1×d GEMV); the delta
+  rule makes a full `tk_train_step_f32` call per sample. On problems this
+  small the per-call overhead dwarfs the arithmetic, so C buys us nothing and
+  the boundary crossings cost everything. See
+  [`docs/LEARNINGS.md`](docs/LEARNINGS.md) — a batched training entry point
+  in mantissa would close most of this gap.
+- **Batch predict (a modest win): 0.029 ms** — the whole test set is one
+  threaded C GEMV (`decision_function` passes X as the weight matrix). That
+  beats scikit-learn (0.047 ms) and pure Python (0.093 ms), though a raw
+  numpy matmul (0.006 ms) still wins on a batch this tiny.
+- **Accuracy: at parity with scikit-learn** across all five datasets (below).
+
+![test accuracy per dataset: ours vs scikit-learn](assets/accuracy.png)
+![median fit time per dataset per contender, log scale](assets/fit_time.png)
+![peak RSS per contender, import plus fit](assets/peak_rss.png)
+
+**Fairness caveats.**
+- scikit-learn's `Perceptron` is Cython SGD doing *strictly more* work per
+  epoch (loss bookkeeping, penalty plumbing) yet wins fit time by orders of
+  magnitude — the gap measures our ctypes per-call overhead, not algorithmic
+  cost.
+- We set `tol=None` on scikit-learn to disable its early stopping and equalize
+  the 100-epoch budget. `ours (perceptron)`, `numpy`, and `pure Python` all
+  early-stop at zero training mistakes; scikit-learn's SGD does not.
+- `numpy`/`pure Python` implement the *same* mistake-driven rule as
+  `ours (perceptron)`, so their fit times are the honest apples-to-apples
+  baseline for the ctypes overhead.
+
+**Environment.** Apple M4 · Python 3.9.6 · numpy 2.0.2 · scikit-learn 1.6.1 ·
+mantissa dtype bfloat16 · threads default(10) · 2026-07-12. Full raw samples
+and versions in `bench/results/speed.json` (regenerable, gitignored).
 <!-- END:BENCH -->
 
 ### Methodology

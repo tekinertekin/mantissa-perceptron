@@ -40,6 +40,40 @@ win. No vibes; numbers or a plan to get them.
   or an assert in debug builds. Zero cost, saves the next integrator an
   afternoon.
 
+## L4. Measured: FFI overhead confirms L1 — we lose fit time to per-sample crossings
+
+- **Observation (Dev B, `bench/speed.py`, banknote 1372×4, 100-epoch cap,
+  15 interleaved repeats, medians, Apple M4)**: median fit times —
+  - `ours (perceptron)`  537 ms  (one `linear_forward` crossing / sample)
+  - `ours (delta)`       661 ms  (one `train_step` crossing / sample)
+  - hand-rolled numpy     52 ms  (same rule, stays in Python/numpy)
+  - pure Python           40 ms  (same rule, no numpy)
+  - scikit-learn SGD     1.4 ms  (Cython, one crossing / fit)
+  We are **~10–13× slower than the naive in-process loops** doing the
+  *identical* mistake-driven rule, and ~380× slower than scikit-learn. The
+  arithmetic is ~100 FLOPs/sample; the gap is pure `ctypes` call overhead,
+  exactly as L1 predicted. Confirmed across all five datasets (see plot).
+- **Contrast — the crossing count is the whole story**: batch `predict` makes
+  *one* crossing for the entire test set (X-as-W GEMV) and lands at 0.029 ms,
+  beating scikit-learn (0.047 ms). Same engine, ~1 call vs n calls.
+- **Expected win**: the `tk_train_epoch_f32` batched entry point from L1
+  would cut banknote from n·100 ≈ 137k crossings to 100. If FFI-bound (it is),
+  fit should collapse from ~537 ms toward the ~40–50 ms in-process baseline —
+  a ≥10× win — and likely undercut it once the epoch loop is C, not Python.
+  This is the single highest-leverage change for training throughput.
+
+## L5. Measured: engine is memory-lean — 3.5× smaller RSS than scikit-learn
+
+- **Observation (Dev B, peak RSS in a fresh subprocess, import + one fit,
+  banknote)**: `ours` 26.7 MB vs `scikit-learn` 93.4 MB; hand-rolled numpy
+  and pure Python also ~26.6 MB. The mantissa dylib adds only ~70 KB over the
+  interpreter+numpy floor.
+- **Idea**: this is a genuine selling point worth *guarding*, not just noting.
+  A CI check that fails if `import mantissa` + a fit exceeds, say, 30 MB on
+  this shape would keep the lean-footprint claim honest as the engine grows.
+- **Measure**: already have the harness (`bench/speed.py --worker`); wire its
+  `ru_maxrss` read into a threshold assertion.
+
 ---
 
-*Add entries below as L4, L5, ... during development.*
+*Add entries below as L6, L7, ... during development.*
