@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+# downloaded test datasets — never push; the code prints fetch instructions
+data/
+*.csv
+*.data
+*.npz
+# local tooling state
+.claude/
