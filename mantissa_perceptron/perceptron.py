@@ -94,7 +94,6 @@ class Perceptron:
         tk = engine()
         identity = load_mantissa().IDENTITY
         rng = np.random.default_rng(self.seed)
-        target = np.empty(1, dtype=np.float32)
 
         for epoch in range(self.epochs):
             order = rng.permutation(n) if self.shuffle else np.arange(n)
@@ -106,11 +105,18 @@ class Perceptron:
                         self.w_ += self.lr * t[i] * X[i]
                         self.b_ += self.lr * t[i]
                         mistakes += 1
-            else:  # delta: whole step inside the C engine, zero-copy in-place
-                for i in order:
-                    target[0] = t[i]
-                    tk.train_step(self.w_, X[i], target, 1, d, identity,
-                                  self.lr, bias=self.b_)
+            else:
+                # delta: the WHOLE epoch is one C call (tk_train_epoch_f32) —
+                # sequential SGD identical to per-sample train_step calls, but
+                # one FFI crossing per epoch instead of one per sample
+                # (mantissa v0.1.11; measured ~140x on this exact pattern).
+                if self.shuffle:
+                    Xe = np.ascontiguousarray(X[order])
+                    te = np.ascontiguousarray(t[order])
+                else:
+                    Xe, te = X, t
+                tk.train_epoch(self.w_, Xe, te, n, 1, d, identity,
+                               self.lr, bias=self.b_)
                 mistakes = int(np.count_nonzero(self.decision_function(X) * t <= 0.0))
             self.errors_.append(mistakes)
             if mistakes == 0:
@@ -130,10 +136,11 @@ class Perceptron:
         X @ w — mantissa's row-parallel kernel does the batch for free.
         """
         X = self._check_X(X, n_features=self.w_.shape[0])
-        z = engine().linear_forward(X, self.w_, None,
-                                    out_dim=X.shape[0], in_dim=X.shape[1],
-                                    act=load_mantissa().IDENTITY)
-        return np.asarray(z, dtype=np.float32) + self.b_[0]
+        z = np.empty(X.shape[0], dtype=np.float32)
+        engine().linear_forward(X, self.w_, None,
+                                out_dim=X.shape[0], in_dim=X.shape[1],
+                                act=load_mantissa().IDENTITY, out=z)
+        return z + self.b_[0]
 
     def predict(self, X):
         return np.where(self.decision_function(X) > 0.0,

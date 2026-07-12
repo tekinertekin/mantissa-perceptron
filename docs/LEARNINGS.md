@@ -42,6 +42,12 @@ win. No vibes; numbers or a plan to get them.
 
 ## L4. Measured: FFI overhead confirms L1 — we lose fit time to per-sample crossings
 
+> **STATUS: LANDED UPSTREAM.** mantissa v0.1.11 shipped `tk_train_epoch_f32`
+> (whole epoch in one crossing; 141x measured in isolation) and v0.1.12 added
+> `tk_linear_forward_batch` + `out=`. Adopted here: delta fit 661 -> 4.39 ms
+> (151x) on banknote, accuracy bit-identical. The loop closed exactly as this
+> entry predicted.
+
 - **Observation (Dev B, `bench/speed.py`, banknote 1372×4, 100-epoch cap,
   15 interleaved repeats, medians, Apple M4)**: median fit times —
   - `ours (perceptron)`  537 ms  (one `linear_forward` crossing / sample)
