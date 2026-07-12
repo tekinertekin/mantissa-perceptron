@@ -67,7 +67,31 @@ python -m mantissa_perceptron list
 ### Accuracy
 
 <!-- BEGIN:ACCURACY (owned by Dev A — bench/accuracy.py output; do not edit outside these markers) -->
-*Pending — produced by `python -m bench.accuracy`.*
+Test accuracy on the held-out 25% (stratified split, seed 42, features
+standardized on train statistics only), 100 epochs. The `perceptron` rule
+uses `lr=1.0` (the boundary is lr-invariant at zero-init); the `delta`
+(ADALINE) rule's `lr` is tuned per dataset on the **train set only** over
+{0.001, 0.003, 0.01, 0.03}. Numbers as measured by `python -m bench.accuracy`.
+
+| dataset | n | d | rule | lr | train acc | test acc | epochs run | converged |
+|---|---|---|---|---|---|---|---|---|
+| iris | 100 | 4 | perceptron | 1 | 1.000 | 1.000 | 3 | yes |
+| iris | 100 | 4 | delta | 0.001 | 1.000 | 1.000 | 1 | yes |
+| banknote | 1372 | 4 | perceptron | 1 | 0.989 | 0.985 | 100 | no |
+| banknote | 1372 | 4 | delta | 0.001 | 0.980 | 0.968 | 100 | no |
+| breast_cancer | 569 | 30 | perceptron | 1 | 0.984 | 0.951 | 100 | no |
+| breast_cancer | 569 | 30 | delta | 0.001 | 0.970 | 0.937 | 100 | no |
+| sonar | 208 | 60 | perceptron | 1 | 0.949 | 0.788 | 100 | no |
+| sonar | 208 | 60 | delta | 0.001 | 0.910 | 0.731 | 100 | no |
+| pima | 768 | 8 | perceptron | 1 | 0.656 | 0.672 | 100 | no |
+| pima | 768 | 8 | delta | 0.001 | 0.780 | 0.771 | 100 | no |
+
+iris is linearly separable, so the perceptron converges to a perfect
+boundary (Novikoff). banknote and breast_cancer are nearly separable. On
+the non-separable sets the honest picture shows: sonar (60 features, 208
+samples) overfits — high train, weak test; pima is genuinely hard for a
+linear model, and there the delta rule's smoother LMS objective beats the
+oscillating mistake-driven rule on both train and test.
 <!-- END:ACCURACY -->
 
 ### Speed and memory vs famous implementations
