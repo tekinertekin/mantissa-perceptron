@@ -42,6 +42,7 @@ COLORS = {
     "numpy": "#008300",             # green
     "purepython": "#4a3aa7",        # violet
     "torch": "#e34948",             # red
+    "tensorflow": "#d96b2f",        # orange
 }
 LABELS = {
     "ours_perceptron": "ours (perceptron)",
@@ -50,6 +51,7 @@ LABELS = {
     "numpy": "numpy",
     "purepython": "pure Python",
     "torch": "torch",
+    "tensorflow": "tensorflow",
 }
 
 # Opaque light surface so the PNG reads on GitHub light AND dark themes.

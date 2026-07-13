@@ -12,6 +12,9 @@ Contenders (same data, same split, same epochs cap, seeded):
   purepython        list-of-floats perceptron, no numpy — the floor
   torch (optional)  torch.nn.Linear(d, 1) + manual perceptron rule; include
                     only if torch imports, never a dependency
+  tensorflow (opt)  same manual rule, whole epoch as one @tf.function graph
+                    (idiomatic TF2 for sequential updates); include only if
+                    tensorflow imports, never a dependency
 
 Methodology — this house measures, never assumes:
   - TIME: fit() wall time only (data already loaded and split; exclude
@@ -49,6 +52,10 @@ from __future__ import annotations
 import json
 import os
 import platform
+
+# Keep TensorFlow's C++ banner out of benchmark output (set before any TF
+# import anywhere in the process).
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 import subprocess
 import sys
 import time
@@ -163,6 +170,79 @@ class PurePyPerceptron:
         return out
 
 
+class TFPerceptron:
+    """The same mistake-driven rule in TensorFlow 2, written the way a
+    competent TF user would: the whole epoch is one @tf.function graph
+    (AutoGraph turns the sample loop into tf.while_loop), so Python is out
+    of the per-sample path. Eager per-sample TF is 100-1000x slower and
+    would benchmark the interpreter, not the framework. Only used when
+    tensorflow imports; never a dependency."""
+
+    def __init__(self, epochs: int = EPOCHS, lr: float = LR, seed: int = 0):
+        self.epochs, self.lr, self.seed = epochs, lr, seed
+
+    _epoch_cache = None
+
+    @classmethod
+    def _epoch_fn(cls):
+        # One traced graph per process (input_signature admits every dataset
+        # shape, so it never retraces). Tracing is a one-time compile — kept
+        # out of fit() timing the same way imports are; a per-fit retrace
+        # would benchmark TF's compiler, not the training rule.
+        if cls._epoch_cache is not None:
+            return cls._epoch_cache
+        import tensorflow as tf
+
+        @tf.function(input_signature=[
+            tf.TensorSpec([None, None], tf.float32),   # X
+            tf.TensorSpec([None], tf.float32),         # targets +-1
+            tf.TensorSpec([None], tf.int32),           # visit order
+            tf.TensorSpec([None], tf.float32),         # w
+            tf.TensorSpec([], tf.float32),             # b
+            tf.TensorSpec([], tf.float32),             # lr
+        ])
+        def epoch(X, t, order, w, b, lr):
+            mistakes = tf.constant(0)
+            for i in order:
+                xi, ti = X[i], t[i]
+                z = tf.tensordot(w, xi, 1) + b
+                if ti * z <= 0.0:
+                    w += lr * ti * xi
+                    b += lr * ti
+                    mistakes += 1
+            return w, b, mistakes
+
+        cls._epoch_cache = epoch
+        return epoch
+
+    def fit(self, X, y):
+        import numpy as np
+        import tensorflow as tf
+        classes = np.unique(y)
+        self.classes_ = classes
+        Xt = tf.constant(X, dtype=tf.float32)
+        t = tf.constant(np.where(y == classes[1], 1.0, -1.0), dtype=tf.float32)
+        n, d = X.shape
+        w = tf.zeros([d], tf.float32)
+        b = tf.constant(0.0)
+        lr = tf.constant(self.lr)
+        epoch = self._epoch_fn()
+        rng = np.random.default_rng(self.seed)
+        for _ in range(self.epochs):
+            order = tf.constant(rng.permutation(n), dtype=tf.int32)
+            w, b, mistakes = epoch(Xt, t, order, w, b, lr)
+            if int(mistakes) == 0:
+                break
+        self.w_, self.b_ = w, b
+        return self
+
+    def predict(self, X):
+        import numpy as np
+        import tensorflow as tf
+        z = (tf.linalg.matvec(tf.constant(X, tf.float32), self.w_) + self.b_).numpy()
+        return np.where(z > 0.0, self.classes_[1], self.classes_[0])
+
+
 class TorchPerceptron:
     """torch.nn.Linear(d, 1) with the manual mistake-driven rule. Only used
     when torch imports; never a dependency."""
@@ -253,11 +333,16 @@ def _contenders():
         ("numpy", lambda: NumpyPerceptron(), _to_f64, _identity),
         ("purepython", lambda: PurePyPerceptron(), _to_lists_X, _to_list_y),
     ]
-    try:
-        import torch  # noqa: F401
+    # Availability check WITHOUT importing: building the registry must not pull
+    # torch/tensorflow into the process, or every RSS worker inherits their
+    # ~400 MB import just by enumerating contenders (measured: it flattened the
+    # whole peak-RSS column to ~460 MB). The library is imported lazily inside
+    # the contender's own build/fit, so only its worker pays for it.
+    from importlib.util import find_spec
+    if find_spec("torch") is not None:
         reg.append(("torch", lambda: TorchPerceptron(), _to_f32, _identity))
-    except ImportError:
-        pass
+    if find_spec("tensorflow") is not None:
+        reg.append(("tensorflow", lambda: TFPerceptron(), _to_f32, _identity))
     return reg
 
 
@@ -389,6 +474,9 @@ def _env_block(contenders) -> dict:
     if any(n == "torch" for n, *_ in contenders):
         import torch
         env["torch"] = torch.__version__
+    if any(n == "tensorflow" for n, *_ in contenders):
+        import tensorflow as tf
+        env["tensorflow"] = tf.__version__
     return env
 
 

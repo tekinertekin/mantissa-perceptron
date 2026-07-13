@@ -5,8 +5,9 @@
 [![Engine](https://img.shields.io/badge/engine-mantissa-00599C.svg)](https://github.com/tekinertekin/mantissa)
 
 Perceptron classifier in Python, powered by the mantissa C engine. Rosenblatt
-+ ADALINE rules, classic UCI datasets, honest benchmarks vs scikit-learn —
-3.5× leaner RAM, 4.6× faster batch predict.
++ ADALINE rules, classic UCI datasets, honest benchmarks vs scikit-learn and
+TensorFlow — faster fit than scikit-learn on every dataset, 3.6× leaner RAM,
+~4× faster batch predict.
 
 **Rosenblatt's perceptron, with a C engine.**
 
@@ -110,42 +111,54 @@ repeats, medians):
 
 | contender | fit (ms) ↓ | predict (ms) ↓ | peak RSS (MB) ↓ |
 |-----------|-----------:|---------------:|----------------:|
-| ours (perceptron) | 1.81 | 0.011 | **27.0** |
-| ours (delta)      | 3.68 | 0.010 | **27.1** |
-| scikit-learn      | **1.31** | 0.045 | 93.6 |
-| numpy (hand-rolled) | 52.46 | **0.006** | 26.6 |
-| pure Python       | 38.76 | 0.092 | 26.6 |
+| ours (perceptron) | **1.26** | 0.012 | **26.7** |
+| ours (delta)      | 2.85 | 0.010 | **26.8** |
+| scikit-learn      | 1.39 | 0.050 | 96.4 |
+| numpy (hand-rolled) | 52.60 | **0.006** | 26.7 |
+| pure Python       | 39.64 | 0.092 | 26.7 |
+| TensorFlow        | 1009.50 | 0.049 | 465.0 |
 
 *torch omitted — not importable in this environment; the harness includes it
 automatically when it is.*
 
-**The story of this table is the two engine releases it forced.** The first
+**The story of this table is the three engine releases it forced.** The first
 run measured our fits at **661 ms (delta)** and **535 ms (Rosenblatt)** — every
-training sample paid a Python→C crossing. Both findings went upstream
+training sample paid a Python→C crossing. Each finding went upstream
 ([`docs/LEARNINGS.md`](docs/LEARNINGS.md)): mantissa v0.1.11 moved the delta
-epoch into one C call (661 → 4.4 ms), and the dataset-epoch primitives that
-followed moved the Rosenblatt rule and the shuffle order in as well:
+epoch into one C call (661 → 4.4 ms), the dataset-epoch primitives moved the
+Rosenblatt rule and the shuffle order in as well, and v0.1.14 attacked what
+profiling showed was left — the crossings themselves:
 
-- **Rosenblatt: 535 → 1.81 ms (295×)** — one `tk_perceptron_epoch_f32`
-  call per epoch, mistake count included. Now within ~1.4× of scikit-learn's
-  Cython SGD, *with* honest early stopping (we stop at zero training mistakes;
-  sklearn with `tol=None` never does — on separable data our fit is a few
-  epochs, not 100).
-- **Delta: 661 → 3.68 ms** — ordered epochs (the shuffle permutation
-  crosses as an int32 index array; no per-epoch row copies) plus one post-epoch
-  convergence pass, kept deliberately: LMS updates on every sample, so only a
-  post-epoch count certifies the final weights (an in-epoch count was measured
-  faster but rejected on exactly that semantic).
-- **Memory: 27.0 MB vs scikit-learn's 93.6 — 3.5× leaner**, unchanged.
-- **Batch predict: 0.010 ms — ~4.7× faster than scikit-learn** (one
+- **Rosenblatt: 535 → 1.81 → 1.26 ms (424×)** — one `tk_perceptron_epoch_f32`
+  call per epoch, mistake count included; then `tk.trainer()` (v0.1.14) binds
+  the W/X/targets/bias pointers once per fit instead of re-deriving them every
+  epoch (measured: the old per-epoch call spent ~7 µs of its 9.8 µs on ctypes
+  pointer conversion, only ~3 µs in C). **Now faster than scikit-learn's
+  Cython SGD on all five datasets**, *with* honest early stopping (we stop at
+  zero training mistakes; sklearn with `tol=None` never does — on separable
+  data our fit is a few epochs, not 100).
+- **Delta: 661 → 3.68 → 2.85 ms** — ordered epochs (the shuffle permutation
+  crosses as an int32 index array; no per-epoch row copies), the same
+  pre-bound pointers, plus one post-epoch convergence pass, kept deliberately:
+  LMS updates on every sample, so only a post-epoch count certifies the final
+  weights (an in-epoch count was measured faster but rejected on exactly that
+  semantic). The residual gap to sklearn is the rule, not the plumbing: LMS
+  writes the weights on *every* sample where the mistake-driven rules write
+  only on errors.
+- **Memory: 26.7 MB vs scikit-learn's 96.4 — 3.6× leaner**; TensorFlow's
+  import alone peaks at 465 MB, 17× ours.
+- **Batch predict: 0.012 ms — ~4× faster than scikit-learn** (one
   threaded C call into a caller buffer).
-- **Accuracy: at parity with scikit-learn.** One honest shift: the Rosenblatt
-  rows moved a few tenths of a point (banknote 0.985 → 0.980, WDBC 0.951 →
-  0.944) because the old per-sample path trained *through* the engine's
-  bfloat16 storage quantization, while `tk_perceptron_epoch_f32` is pure
-  float32 end-to-end — the documented semantic for the `_f32` training family.
-  Delta rows are bit-identical to before (the ordered epoch is pinned
-  bit-identical in mantissa's test suite).
+- **Accuracy: unchanged and at parity with scikit-learn** — the v0.1.14
+  trainer is pinned bit-identical to the previous path (same C entry points,
+  same RNG stream), and `bench/accuracy.py` re-run confirms byte-identical
+  results.
+- **TensorFlow, honestly measured:** the same mistake-driven rule with the
+  whole epoch compiled as one `@tf.function` graph (tracing excluded, like
+  imports). Sequential per-sample updates are simply not TF's shape — each
+  `tf.while_loop` step dispatches kernels — so it lands ~800× behind the C
+  epoch. Its batch predict (0.049 ms) is competitive; the gap is the training
+  loop, not the framework's math.
 
 ![test accuracy per dataset: ours vs scikit-learn](assets/accuracy.png)
 ![median fit time per dataset per contender, log scale](assets/fit_time.png)
@@ -153,16 +166,21 @@ followed moved the Rosenblatt rule and the shuffle order in as well:
 
 **Fairness caveats.**
 - scikit-learn's `Perceptron` is Cython SGD doing strictly more bookkeeping per
-  epoch; the remaining ~1.4× gap is ~1 ctypes crossing per epoch plus the
-  Python-side `rng.permutation` — the C epoch itself is ~4 µs.
+  epoch than the naive rule; our remaining per-epoch overhead is one ctypes
+  crossing plus the Python-side `rng.permutation` (6.4 µs at n=1030 — measured
+  faster than every batching alternative we tried).
 - We set `tol=None` on scikit-learn to disable its early stopping and equalize
   the 100-epoch budget; our early stop fires only at zero training mistakes.
 - `numpy`/`pure Python` implement the same mistake-driven rule in-process and
   are the honest baseline for what the old per-sample FFI loop was costing.
+- TensorFlow runs the identical rule and epoch/shuffle protocol; only graph
+  tracing (a one-time compile) is excluded from fit timing. Eager TF was
+  ~100× slower still and would have benchmarked the interpreter, not TF.
 
 **Environment.** Apple M4 · Python 3.9.6 · numpy 2.0.2 · scikit-learn 1.6.1 ·
-mantissa 0.1.13+ dtype bfloat16 · threads default(10) · 2026-07-13. Full raw
-samples and versions in `bench/results/speed.json` (regenerable, gitignored).
+TensorFlow 2.20.0 · mantissa 0.1.14 dtype bfloat16 · threads default(10) ·
+2026-07-13. Full raw samples and versions in `bench/results/speed.json`
+(regenerable, gitignored).
 <!-- END:BENCH -->
 
 ### Methodology
