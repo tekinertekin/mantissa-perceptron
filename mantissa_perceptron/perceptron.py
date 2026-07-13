@@ -105,26 +105,54 @@ class Perceptron:
         shuffle, is_perceptron = self.shuffle, self.rule == "perceptron"
         errors = self.errors_
 
-        # Feature-detect a C-side gathered epoch (order-index variant of
-        # train_epoch): it applies the shuffle permutation inside the single
-        # FFI crossing, so the two per-epoch host-side gather copies vanish.
-        # Inert until the mantissa engine exposes it — the tested path below is
-        # the pure-Python fallback. Contract (must match to light up):
-        #   tk.train_epoch_ord(W, X, targets, order, n, out_dim, in_dim,
-        #                       act, lr, bias=) -> mean loss, W/bias updated
-        #                       in place; `order` = int indices, length n;
-        #                       row order[k] visited at step k (bit-identical
-        #                       to shuffling X/targets by `order` first).
-        import inspect
-        have_ord = shuffle and "order" in inspect.signature(tk.train_epoch).parameters
-        have_pe = hasattr(tk, "perceptron_epoch")
+        # Preferred path: a pre-bound training session (mantissa v0.1.14+).
+        # Measured on banknote (1030x4, M4): the per-epoch wrapper calls spent
+        # more time re-deriving ctypes pointers for the SAME five buffers than
+        # in the C epoch itself (perceptron_epoch ~9.8 us of which ~3 us C).
+        # tk.trainer() binds W/X/targets/bias once per fit; per-epoch calls
+        # then pass only lr and the visit order. Same C entry points,
+        # bit-identical weight trajectories.
+        trainer = (tk.trainer(w, X, t, n, 1, d, bias=b)
+                   if hasattr(tk, "trainer") else None)
+
+        # Fallback feature-detection for older engines only — inspect.signature
+        # costs ~14 us per fit (measured), a fifth of an iris fit, so it must
+        # not run on the trainer path.
+        if trainer is None:
+            import inspect
+            have_ord = shuffle and "order" in inspect.signature(tk.train_epoch).parameters
+            have_pe = hasattr(tk, "perceptron_epoch")
 
         # Persistent scratch: the post-epoch forward output (delta mistake
         # count) and the host-side shuffle buffer — allocated once, reused
         # every epoch instead of a fresh allocation per epoch.
         z = np.empty(n, dtype=np.float32) if not is_perceptron else None  # post-epoch count buffer
         Xe = (np.empty((n, d), dtype=np.float32)
-              if (not is_perceptron and shuffle and not have_ord) else None)
+              if (trainer is None and not is_perceptron and shuffle) else None)
+
+        if trainer is not None:
+            for epoch in range(self.epochs):
+                # rng.permutation(n).astype(int32) measured FASTER per epoch
+                # than batching all epochs' orders with rng.permuted or an
+                # in-place int32 shuffle (6.4 vs 11.3 / 11.9 us at n=1030) —
+                # keep the obvious form.
+                order = (rng.permutation(n).astype(np.int32)
+                         if shuffle else None)
+                if is_perceptron:
+                    mistakes = trainer.perceptron_epoch(lr, order=order)
+                else:
+                    trainer.train_epoch(identity, lr, order=order)
+                    # errors_ is a POST-epoch count on purpose: LMS updates on
+                    # every sample, so only the final weights certify
+                    # convergence (Rosenblatt's in-epoch zero is exact).
+                    trainer.margins(z)
+                    mistakes = int(np.count_nonzero((z + b[0]) * t <= 0.0))
+                errors.append(mistakes)
+                if mistakes == 0:
+                    break
+            self.n_epochs_ = len(self.errors_)
+            self.converged_ = self.errors_[-1] == 0
+            return self
 
         for epoch in range(self.epochs):
             if is_perceptron:

@@ -157,6 +157,40 @@ win. No vibes; numbers or a plan to get them.
      crossings/fit to 1; expected to land at or under scikit-learn's 1.4 ms.
      This, not incremental primitives, is what closes the gap at this scale.
 
+## L9. After the crossings were few, the crossings themselves were fat — pre-bound pointers (mantissa v0.1.14 `Trainer`)
+
+- **Measured** (banknote 1030×4, M4): one `tk.perceptron_epoch` wrapper call
+  is ~9.8 µs — but the raw C entry with cached pointers is **~3.0 µs**. The
+  other ~7 µs is `_as_c_float`×4 + `_as_c_int32` re-deriving ctypes pointers
+  (~1.3 µs each; numpy's `.ctypes` property alone is ~0.6 µs) for buffers
+  that never change across epochs. L4/L8 counted crossings; this is the cost
+  *per crossing* once the count is minimal.
+- **Fix, upstream** (the L4 pattern again): mantissa v0.1.14 adds
+  `tk.trainer(W, X, t, n, 1, d, bias=b)` — pointers bound once per fit,
+  per-epoch calls pass only `lr`/`order`. Bit-identical trajectories
+  (pinned by comparison over shuffled epochs, both rules), so accuracy.json
+  does not move. Interleaved medians: `perceptron_epoch` 9.8 → 4.8 µs,
+  ordered `train_epoch` 19.5 → 14.0 µs, post-epoch margins GEMV
+  (`Trainer.margins`) 11.8 → 5.8 µs. `fit()` uses it when present; the
+  `inspect.signature` feature probe (measured 14 µs — a fifth of an iris
+  fit!) now runs only on the fallback path.
+- **Measured and rejected**: batching all 100 epochs' orders with
+  `rng.permuted` (11.3 µs/epoch) or an in-place int32 shuffle (11.9 µs) —
+  both lose to per-epoch `rng.permutation(n).astype(int32)` (6.4 µs at
+  n=1030). (L7 already rejected `rng.permuted` for RNG-stream reasons; it
+  also just loses the race.)
+- **Result**: Rosenblatt fit now *beats* scikit-learn on every dataset
+  (banknote 1.81 → 1.30 ms vs sklearn's 1.44, interleaved). L8's ceiling is
+  revised: delta's remaining per-epoch cost is dominated by real C work
+  (~12 µs raw ordered epoch — LMS updates every sample, unlike the
+  mistake-only rules) + 6.4 µs permutation; the whole-fit-in-C projection
+  predated `Trainer` and would now remove ~5 µs/epoch of overhead, not ~15.
+- **Benchmark-harness bug found while adding the TensorFlow contender**:
+  enumerating contenders imported tensorflow into every peak-RSS worker,
+  flattening the whole RSS column to ~460 MB. Availability is now probed
+  with `importlib.util.find_spec` (no import); only the TF worker pays TF's
+  ~450 MB.
+
 ---
 
-*Add entries below as L9, L10, ... during development.*
+*Add entries below as L10, L11, ... during development.*
