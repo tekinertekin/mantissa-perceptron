@@ -25,6 +25,9 @@ Two classic rules, both honest about what they are:
   `tk_train_step_f32` call into the engine. The one to use when the data is
   not separable.
 
+Both rules are unpacked in plain language (with the papers) in
+[New to perceptrons?](#new-to-perceptrons-the-four-ideas-in-this-package)
+
 Minimal on purpose: binary only, dense float32, no multiclass, no sparse.
 sklearn-like interface, not sklearn-compatible.
 
@@ -51,6 +54,61 @@ Xtr, Xte, ytr, yte = datasets.split(X, y)   # seeded, stratified, standardized
 clf = Perceptron().fit(Xtr, ytr)
 print(clf.score(Xte, yte))
 ```
+
+## New to perceptrons? The four ideas in this package
+
+**The single neuron.** A perceptron is one artificial neuron: it multiplies
+each input feature by a learned weight, adds them up with a bias term, and
+answers with the sign — `y = step(w·x + b)`. Geometrically the weights are a
+learned direction in feature space and the bias slides the decision line
+along it: everything on one side of the hyperplane `w·x + b = 0` is class 1,
+everything on the other side is class 0. The unit dates to the
+McCulloch & Pitts (1943) threshold neuron ("A Logical Calculus of the Ideas
+Immanent in Nervous Activity", *Bulletin of Mathematical Biophysics* 5);
+what Rosenblatt added was a way to *learn* the weights from examples
+(Rosenblatt, 1958, "The Perceptron: A Probabilistic Model for Information
+Storage and Organization in the Brain", *Psychological Review* 65(6)):
+
+<img src="assets/concepts/singleneuron.svg" width="320" alt="a single neuron: inputs x1..xd feeding one output o1">
+
+**The mistake-driven rule** (`rule="perceptron"`). Rosenblatt's rule only
+acts when the neuron is *wrong*: predict, and on a mistake nudge the weights
+toward the missed sample — `w += lr·t·x` with targets `t ∈ {−1, +1}` (a
+correct answer changes nothing). The surprise is that this converges: if any
+hyperplane separates the two classes with margin γ, the rule finds one after
+at most `(R/γ)²` mistakes — a finite bound that does not even depend on the
+number of samples (Novikoff, 1962, "On Convergence Proofs on Perceptrons",
+*Proc. Symposium on the Mathematical Theory of Automata*). That is why the
+iris row in the accuracy table below converges in 3 epochs, exactly as the
+theorem promises.
+
+**The delta / LMS rule** (`rule="delta"`). ADALINE's alternative (Widrow &
+Hoff, 1960, "Adaptive Switching Circuits", *IRE WESCON Convention Record*)
+updates on *every* sample, not just mistakes: it runs gradient descent on
+the squared error of the **linear** output `w·x + b` before the step is
+applied — `w += lr·(t − w·x − b)·x`. Because the objective is a smooth bowl
+rather than a count of mistakes, it settles to the least-squares boundary
+even when no perfect separator exists — the case where the mistake-driven
+rule oscillates forever. That is the rule to reach for on non-separable
+data, and it is why delta wins on pima below.
+
+**The famous limit.** A single neuron can only draw one line, so it cannot
+represent XOR — no line puts (0,0) and (1,1) on one side and (0,1) and (1,0)
+on the other. Minsky & Papert made the limits precise in *Perceptrons* (MIT
+Press, 1969), and the fix is a hidden layer between input and output —
+[mantissa](https://github.com/tekinertekin/mantissa) (the engine under this
+package) trains XOR with exactly that, and
+[mantissa-cnn](https://github.com/tekinertekin/mantissa-cnn) keeps stacking
+from there:
+
+<img src="assets/concepts/mlp.svg" width="320" alt="a multilayer perceptron: input layer, one hidden layer, output layer">
+
+<sub>Concept diagrams by Zhang, Lipton, Li & Smola, [*Dive into Deep
+Learning*](https://d2l.ai), licensed
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) —
+redistributed here with attribution, unmodified. The same source and license
+as the concept diagrams in the sister repo
+[mantissa-cnn](https://github.com/tekinertekin/mantissa-cnn).</sub>
 
 ## Datasets
 
