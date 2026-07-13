@@ -129,6 +129,18 @@ python -m mantissa_perceptron list
 | sonar | 208 | 60 | mine vs rock |
 | pima | 768 | 8 | diabetes onset |
 
+One real held-out test sample from each, with the trained model's answer
+under it (`rule="perceptron"`, the fixed protocol: 75/25 stratified split
+seed 42, standardized features, 100 epochs, seed 0; feature values shown
+raw, pre-standardization, so they stay human-readable). Correctly-classified
+examples — the *measured* accuracy per dataset and rule is in
+[Accuracy](#accuracy):
+
+| iris | banknote | breast_cancer | sonar | pima |
+|:----:|:--------:|:-------------:|:-----:|:----:|
+| petal 1.7 cm, sepal 5.4 cm | wavelet var 3.62, skew 8.67 | mean radius 18.25, mean area 1040 | 60 sonar bands, peak 1.00@28 | glucose 85, BMI 26.6, age 31 |
+| → setosa ✓ | → genuine ✓ | → malignant ✓ | → rock ✓ | → no diabetes ✓ |
+
 ## Results
 
 ### Accuracy
