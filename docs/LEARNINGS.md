@@ -82,4 +82,81 @@ win. No vibes; numbers or a plan to get them.
 
 ---
 
-*Add entries below as L6, L7, ... during development.*
+## L6. Measured: delta-fit per-epoch breakdown — two FFI crossings are the floor
+
+- **Observation (perf, per-epoch profile, banknote 1030×4 train, delta,
+  lr=0.01, 100 epochs, Apple M4, perf_counter medians of 500–3000 runs)**.
+  fit() = 4.21 ms total; per-epoch cost decomposes as:
+
+  | component                              | ms/epoch | ×100  | share |
+  |----------------------------------------|----------|-------|-------|
+  | (c) `train_epoch` FFI call             | 0.0157   | 1.57  | 37.2% |
+  | (d) post-epoch mistake count           | 0.0102   | 1.02  | 24.2% |
+  |    ↳ decision_function forward (FFI)    | 0.0088   | 0.88  |       |
+  |    ↳ numpy `* t <= 0` compare           | 0.0014   | 0.14  |       |
+  | (b) shuffle gather copies (X + t)      | 0.0062   | 0.62  | 14.7% |
+  | (a) `rng.permutation(n)`               | 0.0058   | 0.58  | 13.7% |
+  | (e) Python glue (attr/method/loop)     | ~0.0033  | 0.33  | ~8%   |
+
+  **The two FFI crossings per epoch (c + the forward inside d = 0.0245 ms)
+  are 58% of the time and cannot be touched from Python.** Everything else
+  is host-side bookkeeping.
+- **`ascontiguousarray(X[order])` is NOT a double copy**: fancy-indexing axis
+  0 of a C-contiguous array already yields a contiguous array, so
+  `ascontiguousarray` returns the *same object*. The cost in (b) is the
+  gather itself, not a redundant copy.
+
+## L7. Applied (Python-only): 4.31 → 3.97 ms delta fit, bit-identical
+
+- **Change (perf, `perceptron.py::fit`, semantics-preserving)**: (1) gather the
+  shuffled batch with `np.take(..., out=Xe)` into a persistent buffer instead
+  of allocating a fresh array each epoch (0.0052 → 0.0030 ms/epoch); (2) inline
+  the post-epoch forward with a hoisted engine handle + a persistent `z=`
+  buffer, skipping `decision_function`'s per-epoch `_check_X`/`engine()`/
+  `load_mantissa()` re-lookups (0.0094 → 0.0085 ms/epoch); (3) hoist all
+  per-fit invariants (w/b/lr/rule/shuffle) out of the loop; (4) drop the wasted
+  `np.arange(n)` on the delta `shuffle=False` path.
+- **Result (bench/speed.py protocol, R=15 interleaved, banknote)**: delta
+  4.31 → 3.97 ms (**7.8%**, stable across runs); weights, bias, and `errors_`
+  trajectory **bit-identical**; accuracy.json byte-identical; 17 tests green.
+- **Tried and DROPPED — batch-precomputed permutations**: generating all 100
+  epoch orders in one `rng.permuted` call is only ~0.0006 ms/epoch faster AND
+  **consumes the RNG in a different sequence** → different shuffle orders →
+  moves the weight trajectory and accuracy.json. Not worth an accuracy break
+  for 0.06 ms. Per-epoch `rng.permutation` kept verbatim.
+
+## L8. The ceiling: only C can cross the ~3 ms floor — spec for a one-crossing fit
+
+- **Measured floor**: with every Python cost removed, delta fit cannot beat
+  `2 × 0.0088-ish` … concretely the irreducible per-epoch work is the
+  `train_epoch` crossing (1.57 ms/100) + the post-epoch forward (0.88 ms/100)
+  + `rng.permutation` (0.58 ms/100) ≈ **3.0 ms**. scikit-learn does the whole
+  100-epoch fit in **1.4 ms** because it makes *one* Cython entry per `fit()`,
+  not 200 FFI crossings. **We cannot match it while the epoch loop lives in
+  Python.** This is the crossing-count story from L4, one level up.
+- **Highest-leverage C primitives** (integration already guarded in
+  `perceptron.py` via `hasattr(engine, ...)`, inert until they land):
+  1. **`train_epoch_ord`** — order-index epoch that gathers rows inside the
+     one crossing. Removes cost (b) entirely (0.62 ms). Expected delta fit
+     3.97 → ~3.4 ms. Contract: `train_epoch_ord(W, X, targets, order, n,
+     out_dim, in_dim, act, lr, bias=)`, row `order[k]` visited at step k,
+     bit-identical to shuffling first.
+  2. **`tk_perceptron_epoch_f32`** — Rosenblatt epoch in C. The perceptron
+     rule is 552 ms because it makes **n·100 ≈ 103k** `linear_forward`
+     crossings (one per sample). A C epoch collapses that to 100. This in-epoch
+     mistake count *is* the perceptron `errors_` semantic (mistakes counted
+     as encountered, mid-epoch), so it is accuracy-safe — **unlike delta**,
+     whose `errors_` is POST-epoch and must not be replaced by an in-epoch
+     count (would move `errors_`, hence `epochs_run`/`converged`, hence
+     accuracy.json). Must accept the exact `order` array to preserve the
+     sequential-update trajectory.
+  3. **`tk_delta_fit` / whole-loop-in-C** (the real ceiling-breaker): move the
+     entire multi-epoch loop into one FFI crossing per `fit()` — permutation
+     (from a seed), all epochs, POST-epoch mistake counting + zero-mistake
+     early stop, returning the `errors_` array. Collapses delta's 200
+     crossings/fit to 1; expected to land at or under scikit-learn's 1.4 ms.
+     This, not incremental primitives, is what closes the gap at this scale.
+
+---
+
+*Add entries below as L9, L10, ... during development.*

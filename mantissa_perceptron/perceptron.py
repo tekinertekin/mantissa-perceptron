@@ -95,30 +95,64 @@ class Perceptron:
         identity = load_mantissa().IDENTITY
         rng = np.random.default_rng(self.seed)
 
+        # Hoist per-fit invariants out of the epoch loop: attribute lookups,
+        # the engine handle, and the activation id are constant across epochs.
+        w, b, lr = self.w_, self.b_, self.lr        # w/b mutated in place by C
+        shuffle, is_perceptron = self.shuffle, self.rule == "perceptron"
+        errors = self.errors_
+
+        # Feature-detect a C-side gathered epoch (order-index variant of
+        # train_epoch): it applies the shuffle permutation inside the single
+        # FFI crossing, so the two per-epoch host-side gather copies vanish.
+        # Inert until the mantissa engine exposes it — the tested path below is
+        # the pure-Python fallback. Contract (must match to light up):
+        #   tk.train_epoch_ord(W, X, targets, order, n, out_dim, in_dim,
+        #                       act, lr, bias=) -> mean loss, W/bias updated
+        #                       in place; `order` = int indices, length n;
+        #                       row order[k] visited at step k (bit-identical
+        #                       to shuffling X/targets by `order` first).
+        have_ord = shuffle and hasattr(tk, "train_epoch_ord")
+
+        # Persistent scratch: the post-epoch forward output (delta mistake
+        # count) and the host-side shuffle buffer — allocated once, reused
+        # every epoch instead of a fresh allocation per epoch.
+        z = np.empty(n, dtype=np.float32) if not is_perceptron else None
+        Xe = (np.empty((n, d), dtype=np.float32)
+              if (not is_perceptron and shuffle and not have_ord) else None)
+
         for epoch in range(self.epochs):
-            order = rng.permutation(n) if self.shuffle else np.arange(n)
-            if self.rule == "perceptron":
+            if is_perceptron:
+                order = rng.permutation(n) if shuffle else np.arange(n)
                 mistakes = 0
                 for i in order:
-                    z = tk.linear_forward(self.w_, X[i], self.b_, 1, d, identity)[0]
-                    if t[i] * z <= 0.0:                     # mistake (0-margin counts)
-                        self.w_ += self.lr * t[i] * X[i]
-                        self.b_ += self.lr * t[i]
+                    zi = tk.linear_forward(w, X[i], b, 1, d, identity)[0]
+                    if t[i] * zi <= 0.0:                    # mistake (0-margin counts)
+                        w += lr * t[i] * X[i]
+                        b += lr * t[i]
                         mistakes += 1
             else:
                 # delta: the WHOLE epoch is one C call (tk_train_epoch_f32) —
                 # sequential SGD identical to per-sample train_step calls, but
                 # one FFI crossing per epoch instead of one per sample
                 # (mantissa v0.1.11; measured ~140x on this exact pattern).
-                if self.shuffle:
-                    Xe = np.ascontiguousarray(X[order])
-                    te = np.ascontiguousarray(t[order])
+                if have_ord:
+                    order = rng.permutation(n)
+                    tk.train_epoch_ord(w, X, t, order, n, 1, d, identity,
+                                       lr, bias=b)
+                elif shuffle:
+                    order = rng.permutation(n)
+                    np.take(X, order, axis=0, out=Xe)       # reuse buffer
+                    te = t[order]                           # already contiguous
+                    tk.train_epoch(w, Xe, te, n, 1, d, identity, lr, bias=b)
                 else:
-                    Xe, te = X, t
-                tk.train_epoch(self.w_, Xe, te, n, 1, d, identity,
-                               self.lr, bias=self.b_)
-                mistakes = int(np.count_nonzero(self.decision_function(X) * t <= 0.0))
-            self.errors_.append(mistakes)
+                    tk.train_epoch(w, X, t, n, 1, d, identity, lr, bias=b)
+                # errors_ counts POST-epoch mistakes: one forward over all rows
+                # with the updated weights (inlined here to skip decision_function's
+                # per-epoch _check_X/engine lookups; reuses the `z` buffer).
+                tk.linear_forward(X, w, None, out_dim=n, in_dim=d,
+                                  act=identity, out=z)
+                mistakes = int(np.count_nonzero((z + b[0]) * t <= 0.0))
+            errors.append(mistakes)
             if mistakes == 0:
                 break
 
