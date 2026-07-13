@@ -60,6 +60,10 @@ class Perceptron:
     classes_ : ndarray, shape (2,) — sorted original labels; classes_[1]
         is the positive class.
     errors_ : list of int — misclassified training samples per epoch.
+        Rosenblatt counts in-epoch as samples are visited (it updates only
+        on mistakes, so a zero certifies separation); delta counts with a
+        post-epoch pass over the final weights (LMS updates on every
+        sample, so only the post-epoch count certifies convergence).
     n_epochs_ : int — epochs actually run.
     converged_ : bool — last epoch had zero training mistakes.
     """
@@ -111,47 +115,74 @@ class Perceptron:
         #                       in place; `order` = int indices, length n;
         #                       row order[k] visited at step k (bit-identical
         #                       to shuffling X/targets by `order` first).
-        have_ord = shuffle and hasattr(tk, "train_epoch_ord")
+        import inspect
+        have_ord = shuffle and "order" in inspect.signature(tk.train_epoch).parameters
+        have_pe = hasattr(tk, "perceptron_epoch")
 
         # Persistent scratch: the post-epoch forward output (delta mistake
         # count) and the host-side shuffle buffer — allocated once, reused
         # every epoch instead of a fresh allocation per epoch.
-        z = np.empty(n, dtype=np.float32) if not is_perceptron else None
+        z = np.empty(n, dtype=np.float32) if not is_perceptron else None  # post-epoch count buffer
         Xe = (np.empty((n, d), dtype=np.float32)
               if (not is_perceptron and shuffle and not have_ord) else None)
 
         for epoch in range(self.epochs):
             if is_perceptron:
-                order = rng.permutation(n) if shuffle else np.arange(n)
-                mistakes = 0
-                for i in order:
-                    zi = tk.linear_forward(w, X[i], b, 1, d, identity)[0]
-                    if t[i] * zi <= 0.0:                    # mistake (0-margin counts)
-                        w += lr * t[i] * X[i]
-                        b += lr * t[i]
-                        mistakes += 1
+                order = (rng.permutation(n).astype(np.int32)
+                         if shuffle else None)
+                if have_pe:
+                    # One C call per epoch (tk_perceptron_epoch_f32,
+                    # mantissa v0.1.14): same rule, same in-epoch mistake
+                    # count, ~314x fewer FFI crossings. Pure float32 — on a
+                    # narrow-dtype engine build the old per-sample path
+                    # quantized W/x through the storage type each forward,
+                    # so decisions can differ at the margin; f32 end-to-end
+                    # is the documented semantic now.
+                    mistakes = tk.perceptron_epoch(w, X, t, n, 1, d, lr,
+                                                   bias=b, order=order)
+                else:
+                    idx = order if order is not None else range(n)
+                    mistakes = 0
+                    for i in idx:
+                        zi = tk.linear_forward(w, X[i], b, 1, d, identity)[0]
+                        if t[i] * zi <= 0.0:                # mistake (0-margin counts)
+                            w += lr * t[i] * X[i]
+                            b += lr * t[i]
+                            mistakes += 1
             else:
                 # delta: the WHOLE epoch is one C call (tk_train_epoch_f32) —
                 # sequential SGD identical to per-sample train_step calls, but
                 # one FFI crossing per epoch instead of one per sample
                 # (mantissa v0.1.11; measured ~140x on this exact pattern).
                 if have_ord:
-                    order = rng.permutation(n)
-                    tk.train_epoch_ord(w, X, t, order, n, 1, d, identity,
-                                       lr, bias=b)
+                    # order= applies the shuffle inside the single crossing —
+                    # no permuted copies of X/targets. errors_ stays a
+                    # POST-epoch count on purpose: LMS updates on every
+                    # sample (correct ones included), so an in-epoch zero
+                    # would not certify that the FINAL weights separate the
+                    # data — the convergence early-stop needs the post-epoch
+                    # pass. (Rosenblatt differs: it updates only on
+                    # mistakes, so its in-epoch zero is exact.)
+                    order = (rng.permutation(n).astype(np.int32)
+                             if shuffle else None)
+                    tk.train_epoch(w, X, t, n, 1, d, identity,
+                                   lr, bias=b, order=order)
+                    tk.linear_forward(X, w, None, out_dim=n, in_dim=d,
+                                      act=identity, out=z)
+                    mistakes = int(np.count_nonzero((z + b[0]) * t <= 0.0))
                 elif shuffle:
                     order = rng.permutation(n)
                     np.take(X, order, axis=0, out=Xe)       # reuse buffer
                     te = t[order]                           # already contiguous
                     tk.train_epoch(w, Xe, te, n, 1, d, identity, lr, bias=b)
+                    tk.linear_forward(X, w, None, out_dim=n, in_dim=d,
+                                      act=identity, out=z)
+                    mistakes = int(np.count_nonzero((z + b[0]) * t <= 0.0))
                 else:
                     tk.train_epoch(w, X, t, n, 1, d, identity, lr, bias=b)
-                # errors_ counts POST-epoch mistakes: one forward over all rows
-                # with the updated weights (inlined here to skip decision_function's
-                # per-epoch _check_X/engine lookups; reuses the `z` buffer).
-                tk.linear_forward(X, w, None, out_dim=n, in_dim=d,
-                                  act=identity, out=z)
-                mistakes = int(np.count_nonzero((z + b[0]) * t <= 0.0))
+                    tk.linear_forward(X, w, None, out_dim=n, in_dim=d,
+                                      act=identity, out=z)
+                    mistakes = int(np.count_nonzero((z + b[0]) * t <= 0.0))
             errors.append(mistakes)
             if mistakes == 0:
                 break

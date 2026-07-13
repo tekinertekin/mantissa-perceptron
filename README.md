@@ -85,13 +85,13 @@ uses `lr=1.0` (the boundary is lr-invariant at zero-init); the `delta`
 |---|---|---|---|---|---|---|---|---|
 | iris | 100 | 4 | perceptron | 1 | 1.000 | 1.000 | 3 | yes |
 | iris | 100 | 4 | delta | 0.001 | 1.000 | 1.000 | 1 | yes |
-| banknote | 1372 | 4 | perceptron | 1 | 0.989 | 0.985 | 100 | no |
+| banknote | 1372 | 4 | perceptron | 1 | 0.991 | 0.980 | 100 | no |
 | banknote | 1372 | 4 | delta | 0.001 | 0.980 | 0.968 | 100 | no |
-| breast_cancer | 569 | 30 | perceptron | 1 | 0.984 | 0.951 | 100 | no |
+| breast_cancer | 569 | 30 | perceptron | 1 | 0.995 | 0.944 | 100 | no |
 | breast_cancer | 569 | 30 | delta | 0.001 | 0.970 | 0.937 | 100 | no |
-| sonar | 208 | 60 | perceptron | 1 | 0.949 | 0.788 | 100 | no |
+| sonar | 208 | 60 | perceptron | 1 | 0.929 | 0.788 | 100 | no |
 | sonar | 208 | 60 | delta | 0.001 | 0.910 | 0.731 | 100 | no |
-| pima | 768 | 8 | perceptron | 1 | 0.656 | 0.672 | 100 | no |
+| pima | 768 | 8 | perceptron | 1 | 0.674 | 0.661 | 100 | no |
 | pima | 768 | 8 | delta | 0.001 | 0.780 | 0.771 | 100 | no |
 
 iris is linearly separable, so the perceptron converges to a perfect
@@ -110,62 +110,58 @@ repeats, medians):
 
 | contender | fit (ms) ↓ | predict (ms) ↓ | peak RSS (MB) ↓ |
 |-----------|-----------:|---------------:|----------------:|
-| ours (delta)      | 4.39 | 0.010 | **26.8** |
-| ours (perceptron) | 534.80 | 0.011 | **26.8** |
-| scikit-learn      | **1.39** | 0.046 | 93.2 |
-| numpy (hand-rolled) | 51.88 | **0.006** | 26.6 |
-| pure Python       | 39.12 | 0.090 | 26.6 |
+| ours (perceptron) | 1.81 | 0.011 | **27.0** |
+| ours (delta)      | 3.68 | 0.010 | **27.1** |
+| scikit-learn      | **1.31** | 0.045 | 93.6 |
+| numpy (hand-rolled) | 52.46 | **0.006** | 26.6 |
+| pure Python       | 38.76 | 0.092 | 26.6 |
 
 *torch omitted — not importable in this environment; the harness includes it
 automatically when it is.*
 
-**Read this honestly — including what changed.** The first run of this
-benchmark measured `ours (delta)` at **661 ms**: every training sample paid a
-Python→C ctypes crossing, and on problems this small the boundary dwarfs the
-arithmetic. That finding went upstream (see
-[`docs/LEARNINGS.md`](docs/LEARNINGS.md)): mantissa v0.1.11 added
-`tk_train_epoch_f32`, which runs the whole epoch's sample loop inside the
-library — same sequential SGD, bit-identical weights, one crossing per epoch.
-The result on the identical protocol: **661 → 4.39 ms (151×)**.
+**The story of this table is the two engine releases it forced.** The first
+run measured our fits at **661 ms (delta)** and **535 ms (Rosenblatt)** — every
+training sample paid a Python→C crossing. Both findings went upstream
+([`docs/LEARNINGS.md`](docs/LEARNINGS.md)): mantissa v0.1.11 moved the delta
+epoch into one C call (661 → 4.4 ms), and the dataset-epoch primitives that
+followed moved the Rosenblatt rule and the shuffle order in as well:
 
-- **Training (delta): 4.39 ms** — ~9× faster than a hand-rolled numpy loop
-  and ~3.2× behind scikit-learn's Cython SGD. Closing a 466× gap to 3.2×
-  by moving one loop across the FFI boundary is the whole lesson of this
-  benchmark.
-- **Training (perceptron rule): 534.80 ms, unchanged and still honest** — the
-  mistake-driven Rosenblatt update doesn't map onto a gradient-epoch API, so
-  it still crosses the boundary per sample. It exists for the convergence
-  theorem, not for speed; use `rule="delta"` when training time matters.
-- **Memory (our win): 26.8 MB vs scikit-learn's 93.2 MB — 3.5× leaner**,
-  import + one fit, whole-process peak. The mantissa engine adds only a
-  ~70 KB C dylib on top of the interpreter+numpy floor every contender pays;
-  scikit-learn drags in scipy and its Cython extensions.
-- **Batch predict: 0.010 ms — 4.6× faster than scikit-learn** (0.046 ms).
-  The whole test set is one threaded C call, now written straight into a
-  caller buffer (`out=`, mantissa v0.1.12). A raw numpy matmul (0.006 ms)
-  still wins on a batch this tiny.
-- **Accuracy: at parity with scikit-learn** across all five datasets (below),
-  and bit-identical to the pre-speedup runs — the epoch API changed where the
-  loop runs, not what it computes.
+- **Rosenblatt: 535 → 1.81 ms (295×)** — one `tk_perceptron_epoch_f32`
+  call per epoch, mistake count included. Now within ~1.4× of scikit-learn's
+  Cython SGD, *with* honest early stopping (we stop at zero training mistakes;
+  sklearn with `tol=None` never does — on separable data our fit is a few
+  epochs, not 100).
+- **Delta: 661 → 3.68 ms** — ordered epochs (the shuffle permutation
+  crosses as an int32 index array; no per-epoch row copies) plus one post-epoch
+  convergence pass, kept deliberately: LMS updates on every sample, so only a
+  post-epoch count certifies the final weights (an in-epoch count was measured
+  faster but rejected on exactly that semantic).
+- **Memory: 27.0 MB vs scikit-learn's 93.6 — 3.5× leaner**, unchanged.
+- **Batch predict: 0.010 ms — ~4.7× faster than scikit-learn** (one
+  threaded C call into a caller buffer).
+- **Accuracy: at parity with scikit-learn.** One honest shift: the Rosenblatt
+  rows moved a few tenths of a point (banknote 0.985 → 0.980, WDBC 0.951 →
+  0.944) because the old per-sample path trained *through* the engine's
+  bfloat16 storage quantization, while `tk_perceptron_epoch_f32` is pure
+  float32 end-to-end — the documented semantic for the `_f32` training family.
+  Delta rows are bit-identical to before (the ordered epoch is pinned
+  bit-identical in mantissa's test suite).
 
 ![test accuracy per dataset: ours vs scikit-learn](assets/accuracy.png)
 ![median fit time per dataset per contender, log scale](assets/fit_time.png)
 ![peak RSS per contender, import plus fit](assets/peak_rss.png)
 
 **Fairness caveats.**
-- scikit-learn's `Perceptron` is Cython SGD doing *strictly more* work per
-  epoch (loss bookkeeping, penalty plumbing); the remaining 3.2× gap is a
-  compiled-loop-vs-one-FFI-call-per-epoch difference plus our per-epoch
-  mistake count, not algorithmic cost.
+- scikit-learn's `Perceptron` is Cython SGD doing strictly more bookkeeping per
+  epoch; the remaining ~1.4× gap is ~1 ctypes crossing per epoch plus the
+  Python-side `rng.permutation` — the C epoch itself is ~4 µs.
 - We set `tol=None` on scikit-learn to disable its early stopping and equalize
-  the 100-epoch budget. `ours (perceptron)`, `numpy`, and `pure Python` all
-  early-stop at zero training mistakes; scikit-learn's SGD does not.
-- `numpy`/`pure Python` implement the *same* mistake-driven rule as
-  `ours (perceptron)`, so their fit times are the honest apples-to-apples
-  baseline for the remaining per-sample ctypes overhead.
+  the 100-epoch budget; our early stop fires only at zero training mistakes.
+- `numpy`/`pure Python` implement the same mistake-driven rule in-process and
+  are the honest baseline for what the old per-sample FFI loop was costing.
 
 **Environment.** Apple M4 · Python 3.9.6 · numpy 2.0.2 · scikit-learn 1.6.1 ·
-mantissa 0.1.12 dtype bfloat16 · threads default(10) · 2026-07-12. Full raw
+mantissa 0.1.13+ dtype bfloat16 · threads default(10) · 2026-07-13. Full raw
 samples and versions in `bench/results/speed.json` (regenerable, gitignored).
 <!-- END:BENCH -->
 
