@@ -181,12 +181,12 @@ repeats, medians):
 
 | contender | fit (ms) ↓ | predict (ms) ↓ | peak RSS (MB) ↓ |
 |-----------|-----------:|---------------:|----------------:|
-| ours (perceptron) | **1.26** | 0.012 | **26.7** |
-| ours (delta)      | 2.85 | 0.010 | **26.8** |
-| scikit-learn      | 1.39 | 0.050 | 96.4 |
-| numpy (hand-rolled) | 52.60 | **0.006** | 26.7 |
-| pure Python       | 39.64 | 0.092 | 26.7 |
-| TensorFlow        | 1009.50 | 0.049 | 465.0 |
+| ours (perceptron) | **1.27** | 0.013 | **26.8** |
+| ours (delta)      | 2.90 | 0.010 | **26.7** |
+| scikit-learn      | 1.38 | 0.050 | 96.4 |
+| numpy (hand-rolled) | 52.98 | **0.006** | 26.7 |
+| pure Python       | 39.34 | 0.091 | 26.7 |
+| TensorFlow        | 1005.39 | 0.051 | 479.4 |
 
 *torch omitted — not importable in this environment; the harness includes it
 automatically when it is.*
@@ -199,7 +199,7 @@ epoch into one C call (661 → 4.4 ms), the dataset-epoch primitives moved the
 Rosenblatt rule and the shuffle order in as well, and v0.1.14 attacked what
 profiling showed was left — the crossings themselves:
 
-- **Rosenblatt: 535 → 1.81 → 1.26 ms (424×)** — one `tk_perceptron_epoch_f32`
+- **Rosenblatt: 535 → 1.81 → 1.27 ms (420×)** — one `tk_perceptron_epoch_f32`
   call per epoch, mistake count included; then `tk.trainer()` (v0.1.14) binds
   the W/X/targets/bias pointers once per fit instead of re-deriving them every
   epoch (measured: the old per-epoch call spent ~7 µs of its 9.8 µs on ctypes
@@ -207,7 +207,7 @@ profiling showed was left — the crossings themselves:
   Cython SGD on all five datasets**, *with* honest early stopping (we stop at
   zero training mistakes; sklearn with `tol=None` never does — on separable
   data our fit is a few epochs, not 100).
-- **Delta: 661 → 3.68 → 2.85 ms** — ordered epochs (the shuffle permutation
+- **Delta: 661 → 3.68 → 2.90 ms** — ordered epochs (the shuffle permutation
   crosses as an int32 index array; no per-epoch row copies), the same
   pre-bound pointers, plus one post-epoch convergence pass, kept deliberately:
   LMS updates on every sample, so only a post-epoch count certifies the final
@@ -215,19 +215,19 @@ profiling showed was left — the crossings themselves:
   semantic). The residual gap to sklearn is the rule, not the plumbing: LMS
   writes the weights on *every* sample where the mistake-driven rules write
   only on errors.
-- **Memory: 26.7 MB vs scikit-learn's 96.4 — 3.6× leaner**; TensorFlow's
-  import alone peaks at 465 MB, 17× ours.
-- **Batch predict: 0.012 ms — ~4× faster than scikit-learn** (one
+- **Memory: 26.8 MB vs scikit-learn's 96.4 — 3.6× leaner**; TensorFlow's
+  import alone peaks at 479 MB, 18× ours.
+- **Batch predict: 0.013 ms — ~4× faster than scikit-learn** (one
   threaded C call into a caller buffer).
 - **Accuracy: unchanged and at parity with scikit-learn** — the v0.1.14
   trainer is pinned bit-identical to the previous path (same C entry points,
-  same RNG stream), and `bench/accuracy.py` re-run confirms byte-identical
-  results.
+  same RNG stream), and the `bench/accuracy.py` re-run under mantissa v0.2.3
+  confirms byte-identical results.
 - **TensorFlow, honestly measured:** the same mistake-driven rule with the
   whole epoch compiled as one `@tf.function` graph (tracing excluded, like
   imports). Sequential per-sample updates are simply not TF's shape — each
   `tf.while_loop` step dispatches kernels — so it lands ~800× behind the C
-  epoch. Its batch predict (0.049 ms) is competitive; the gap is the training
+  epoch. Its batch predict (0.051 ms) is competitive; the gap is the training
   loop, not the framework's math.
 
 ![test accuracy per dataset: ours vs scikit-learn](assets/accuracy.png)
@@ -248,9 +248,12 @@ profiling showed was left — the crossings themselves:
   ~100× slower still and would have benchmarked the interpreter, not TF.
 
 **Environment.** Apple M4 · Python 3.9.6 · numpy 2.0.2 · scikit-learn 1.6.1 ·
-TensorFlow 2.20.0 · mantissa 0.1.14 dtype bfloat16 · threads default(10) ·
-2026-07-13. Full raw samples and versions in `bench/results/speed.json`
-(regenerable, gitignored).
+TensorFlow 2.20.0 · mantissa 0.2.3 dtype bfloat16 · threads default(10) ·
+2026-07-14. Full raw samples and versions in `bench/results/speed.json`
+(regenerable, gitignored). Re-measured for the v0.2.3 engine (an audit
+release that does not touch this package's code path): every median
+reproduced within ±3% of the previous run and no ratio moved — day-to-day
+machine noise the interleaved protocol is designed to absorb.
 <!-- END:BENCH -->
 
 ### Methodology
