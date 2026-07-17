@@ -13,7 +13,7 @@ from pathlib import Path
 # PLACEHOLDER: the PyPI distribution name for mantissa is being finalized by
 # the packaging agent. Update this one constant (and pyproject.toml) when it
 # lands; nothing else references the pip name.
-MANTISSA_PIP_NAME = "mantissa-nn"
+MANTISSA_PIP_NAME = "mantissa-core"
 
 # Sibling checkout when this repo lives next to mantissa/:
 #   <parent>/perceptron/mantissa_perceptron/_engine.py  ->  <parent>/mantissa/python

@@ -37,7 +37,7 @@ sklearn-like interface, not sklearn-compatible.
 pip install mantissa-perceptron   # after PyPI publication
 ```
 
-This pulls in the engine (`mantissa-nn`) automatically.
+This pulls in the engine (`mantissa-core`) automatically.
 
 From a checkout (works today, no PyPI needed): clone this repo next to
 [mantissa](https://github.com/tekinertekin/mantissa), build the engine
