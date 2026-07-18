@@ -34,7 +34,7 @@ sklearn-like interface, not sklearn-compatible.
 ## Install
 
 ```sh
-pip install mantissa-perceptron   # after PyPI publication
+pip install mantissa-perceptron
 ```
 
 This pulls in the engine (`mantissa-core`) automatically.
@@ -69,7 +69,7 @@ what Rosenblatt added was a way to *learn* the weights from examples
 (Rosenblatt, 1958, "The Perceptron: A Probabilistic Model for Information
 Storage and Organization in the Brain", *Psychological Review* 65(6)):
 
-<img src="assets/concepts/singleneuron.svg" width="320" alt="a single neuron: inputs x1..xd feeding one output o1">
+<img src="https://raw.githubusercontent.com/tekinertekin/mantissa-perceptron/main/assets/concepts/singleneuron.svg" width="320" alt="a single neuron: inputs x1..xd feeding one output o1">
 
 **The mistake-driven rule** (`rule="perceptron"`). Rosenblatt's rule only
 acts when the neuron is *wrong*: predict, and on a mistake nudge the weights
@@ -101,7 +101,7 @@ package) trains XOR with exactly that, and
 [mantissa-cnn](https://github.com/tekinertekin/mantissa-cnn) keeps stacking
 from there:
 
-<img src="assets/concepts/mlp.svg" width="320" alt="a multilayer perceptron: input layer, one hidden layer, output layer">
+<img src="https://raw.githubusercontent.com/tekinertekin/mantissa-perceptron/main/assets/concepts/mlp.svg" width="320" alt="a multilayer perceptron: input layer, one hidden layer, output layer">
 
 <sub>Concept diagrams by Zhang, Lipton, Li & Smola, [*Dive into Deep
 Learning*](https://d2l.ai), licensed
@@ -230,9 +230,9 @@ profiling showed was left — the crossings themselves:
   epoch. Its batch predict (0.051 ms) is competitive; the gap is the training
   loop, not the framework's math.
 
-![test accuracy per dataset: ours vs scikit-learn](assets/accuracy.png)
-![median fit time per dataset per contender, log scale](assets/fit_time.png)
-![peak RSS per contender, import plus fit](assets/peak_rss.png)
+![test accuracy per dataset: ours vs scikit-learn](https://raw.githubusercontent.com/tekinertekin/mantissa-perceptron/main/assets/accuracy.png)
+![median fit time per dataset per contender, log scale](https://raw.githubusercontent.com/tekinertekin/mantissa-perceptron/main/assets/fit_time.png)
+![peak RSS per contender, import plus fit](https://raw.githubusercontent.com/tekinertekin/mantissa-perceptron/main/assets/peak_rss.png)
 
 **Fairness caveats.**
 - scikit-learn's `Perceptron` is Cython SGD doing strictly more bookkeeping per
