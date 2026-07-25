@@ -43,6 +43,7 @@ on — ⭐ marks where you are, and every other name links to its repo.
     - [mantissa-cnn](https://github.com/tekinertekin/mantissa-cnn) — convolutional networks for images
       - [mantissa-auto-encoder](https://github.com/tekinertekin/mantissa-auto-encoder) — autoencoders for denoising & super-resolution
       - [mantissa-interpret](https://github.com/tekinertekin/mantissa-interpret) — CNN interpretability (occlusion, saliency, Grad-CAM)
+      - [mantissa-embed](https://github.com/tekinertekin/mantissa-embed) — CNN metric learning (image embeddings for similarity & retrieval)
     - [mantissa-mlp](https://github.com/tekinertekin/mantissa-mlp) — multilayer perceptrons, fully-connected nets
 
 
